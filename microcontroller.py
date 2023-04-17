@@ -32,43 +32,6 @@ left_pressed = False
 left_pressed_lock = threading.Lock()
 
 
-class SplitFrames(io.IOBase):
-    
-    def __init__(self,camera):
-        self.start = time.time()
-        self.camera = camera
-    
-    def write(self,buf):
-        global img
-        if buf.startswith(b'\xff\xd8'):
-            jpeg_bytes = io.BytesIO(buf)
-            pil_image = Image.open(jpeg_bytes)
-            rgb_image = pil_image.convert('RGB')
-            rgb_array = np.array(rgb_image)
-            image = rgb_array[16:336,144:464]
-            #image = cv2.resize(rgb_array[16:336,144:464], (320,320))
-            with img_lock:
-                img = image
-            print(time.time() - self.start)
-
-
-class Camera:
-    
-    def __init__(self):
-        self.thread = threading.Thread(target=self._run)
-        self.camera = picamera.PiCamera()
-        self.camera.resolution = (608,342)
-        self.camera.framerate = 30
-        with cam_lock:
-            cam = self.camera
-        
-    def start(self):
-        self.thread.start()
-        
-    def _run(self):
-        output = SplitFrames(self.camera)
-        self.camera.start_recording(output, format='mjpeg')
-
 
 class ComputerVision:
     
@@ -79,9 +42,6 @@ class ComputerVision:
         self.input = self.i.get_input_details()[0]
         
         self.thread = threading.Thread(target=self._run)
-        
-        self.camera = Camera()
-        self.camera.start()
         
         
     def get_boxes(self, img_tensor):
@@ -97,7 +57,7 @@ class ComputerVision:
         for(index, score) in enumerate(scores):
             if score>0.4:
                 boxes.append(locations[index])
-                if locations[index][2] < 0.9:
+                if locations[index][2] < 0.8:
                     filt_boxes.append(locations[index])
         with boxs_lock:
             boxs = boxes
@@ -128,6 +88,7 @@ class ComputerVision:
             with img_lock:
                 frame = img
             if frame is None:
+                time.sleep(1)
                 continue
             boxes = self.get_boxes(frame)
             if len(boxes) == 0:
@@ -136,10 +97,10 @@ class ComputerVision:
             else:
                 closest_center, closest_box_idx = self.get_closest_center(boxes)
                 closest_vector = self.get_vector(closest_center)
-                print(closest_vector)
+                # print(closest_vector)
                 with vector_lock:
                     vector = closest_vector
-            #print(time.time() - start)
+            print(str(int(1/(time.time() - start))) + " FPS")
 
 
 class MouseInputBlocker:
@@ -247,24 +208,23 @@ class MouseEmulator:
         left = False
         right = False
         
-        while True:
-            for event in mouse.read_loop():
-                with right_pressed_lock:
-                    right_pressed = right
-                with left_pressed_lock:
-                    left_pressed = left
-                if event.type == 1:
-                    if event.code == 272:
-                        left = True if event.value == 1 else False
-                        self.move_mouse(0, True, left, False)
-                    else:
-                        right = True if event.value == 1 else False
-                        self.move_mouse(0, True, False, right)
-                elif event.type == 2:
-                    if event.code == 0:
-                        self.move_mouse(event.value, True, left, right)
-                    else:
-                        self.move_mouse(event.value, False, left, right)
+        for event in mouse.read_loop():
+            with right_pressed_lock:
+                right_pressed = right
+            with left_pressed_lock:
+                left_pressed = left
+            if event.type == 1:
+                if event.code == 272:
+                    left = True if event.value == 1 else False
+                    self.move_mouse(0, True, left, False)
+                else:
+                    right = True if event.value == 1 else False
+                    self.move_mouse(0, True, False, right)
+            elif event.type == 2:
+                if event.code == 0:
+                    self.move_mouse(event.value, True, left, right)
+                else:
+                    self.move_mouse(event.value, False, left, right)
                     
     def start(self):
         self.thread.start()
@@ -297,12 +257,35 @@ def exit_handler():
     global cam
     with cam_lock:
         cam.close()
+        
+def run_camera():
+    
+    def image_callback(port,buf):
+        global img
+        img_data = np.frombuffer(buf.data,dtype=np.uint8)
+        img_data = img_data.reshape((352,608,3))[16:336,144:464]
+        with img_lock:
+            img = img_data
+    
+    camera = mo.MMALCamera()
+    preview = mo.MMALRenderer()
+    camera.outputs[0].framesize = (608, 342)
+    camera.outputs[0].framerate = 60
+    camera.outputs[0].format = mmal.MMAL_ENCODING_RGB24
+    camera.outputs[0].commit()
+    camera.outputs[0].enable(image_callback)
+    while True:                 
+        time.sleep(10)
                     
 def main():
+    
+    cam_thread = threading.Thread(target=run_camera)
+    cam_thread.start()
+    
     m = MouseEmulator()
     m.start()
+    
     mi = MouseInjector()
-    time.sleep(5)
     mi.start()
     
     
