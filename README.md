@@ -1,5 +1,3 @@
 A multipurpose Raspberry Pi based computer vision aimbot system
 
-[DEMO](https://youtu.be/rmj1RCDSflE)
-
-**Full Youtube video and explanation coming soon**
+Check out the [Demo](https://www.youtube.com/watch?v=DQEDPBY_OHQ)!
